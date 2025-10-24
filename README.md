@@ -1,67 +1,121 @@
-# quantization-benchmark
+# Quantization Benchmark Playground
 
-A small repository for benchmarking model quantization workflows and measuring the accuracy / performance tradeoffs introduced by different quantization approaches.
-
----
-
-Repository snapshot
-- Repository: iamfaham/quantization-benchmark
-- Current files (at this commit):
-  - README.md — https://github.com/iamfaham/quantization-benchmark/blob/main/README.md
-- Repo commit OID: 498b14339ae640dc20c65d41cd1877af38ddde52
-- README blob SHA: 874b16522649aade82f4d0e1644c40a3e30c099c
-
-> Note: At the moment this repository contains only this README file. The sections below describe the intended purpose, suggested layout, and contribution guidelines to make the repository useful for benchmarking quantization approaches.
+> A practical notebook for benchmarking **FP16 vs INT4** quantized language model inference using `bitsandbytes` and the Hugging Face `transformers` stack.
 
 ---
 
-What this repo is for
-- Provide reproducible benchmarks comparing full-precision and quantized models (e.g., FP32 vs INT8).
-- Track accuracy, latency, memory, and model size after applying different quantization strategies and toolchains.
-- Store scripts and example configurations to run end-to-end quantization experiments.
+### Overview
 
-Suggested repository layout
-- data/ — datasets and dataset-preparation scripts (or instructions to download them).
-- models/ — model definitions and pretrained weights (or links to them).
-- scripts/ — command-line scripts for running training, evaluation, and quantization pipelines.
-- benchmarks/ — benchmark harnesses, runner scripts, and experiment configurations.
-- results/ — serialized benchmark outputs, CSVs, and plots.
-- notebooks/ — exploratory notebooks for visualizing and inspecting results.
-- docs/ — documentation for experiments and methods used.
+This notebook explores how **post-training quantization** affects the performance, accuracy, and efficiency of decoder-only transformer models.
 
-Usage (example commands to include when scripts are added)
-- Clone the repo
-  git clone https://github.com/iamfaham/quantization-benchmark.git
-- Typical workflow (to be implemented in scripts/)
-  1. Prepare dataset: scripts/prepare_data.sh
-  2. Evaluate FP32 baseline: scripts/eval.sh --model models/resnet50_fp32.pth --dataset data/imagenet
-  3. Quantize model: scripts/quantize.sh --model models/resnet50_fp32.pth --method post_training_static
-  4. Run quantized evaluation: scripts/eval.sh --model models/resnet50_int8.pth --dataset data/imagenet
-  5. Collect metrics: benchmarks/collect_results.py
+It measures:
 
-Recommended benchmark metrics
-- Accuracy (top-1, top-5)
-- Inference latency (p50 / p95)
-- Throughput (images/sec)
-- Model size on disk
-- Peak memory usage
-- Quantization method & configuration (e.g., per-channel vs per-tensor, calibration dataset size)
+| Metric         | Description                                          |
+| -------------- | ---------------------------------------------------- |
+| **Perplexity** | Evaluates model accuracy on the WikiText-2 test set  |
+| **Latency**    | Generation speed (time to produce new tokens)        |
+| **GPU Memory** | Peak CUDA memory during inference                    |
 
-How to contribute
-- Add code, benchmarks, or datasets under appropriately named directories.
-- Create small, focused pull requests with:
-  - A clear description of what was added/changed
-  - A short README or note describing how to run the added benchmark
-  - Example commands to reproduce results
-- Include tests where reasonable (e.g., small unit tests for scripts).
-
-License and attribution
-- No license file is present currently. Add a LICENSE file if you want to specify reuse terms.
-
-Contact
-- Maintainer: iamfaham
-- For questions about experiments or contributions, open an issue or submit a pull request with details.
+The benchmark demonstrates how lower precision (4-bit INT4) compares to standard FP16 precision in real inference scenarios.
 
 ---
 
-If you want, this README can be adjusted to list any existing scripts, models, or datasets once they're added to the repository.
+### Experiment Setup
+
+**Model:** [facebook/opt-66m](https://huggingface.co/facebook/opt-66m)
+**Quantization Library:** [bitsandbytes](https://github.com/TimDettmers/bitsandbytes)
+**Dataset:** WikiText-2 (test split)
+**Hardware:** NVIDIA T4 GPU (Colab tested)
+
+Each test:
+
+1. Loads a pretrained OPT model (FP16 and INT4 versions).
+2. Generates text sequences (default: 200 new tokens).
+3. Measures latency, memory, and perplexity.
+4. Compares results between FP16 and quantized versions.
+
+---
+
+### Theoretical Background
+
+**Quantization** compresses model weights by lowering their numeric precision.
+
+* **FP16:** 16-bit floating-point (≈2 bytes/weight)
+* **INT4:** 4-bit integer (≈0.5 bytes/weight)
+
+This can shrink model size by ~4×, but adds unpacking overhead during computation.
+
+In transformer models:
+
+* Weights are quantized.
+* KV-caches (used during generation) remain FP16 — so runtime memory doesn’t always drop.
+
+---
+
+### Results Summary
+
+| Metric          | FP16    | INT4    | Observation                           |
+| --------------- | ------- | ------- | ------------------------------------- |
+| **Perplexity**  | ~70.9   | ~74.7   | ✅ Minimal accuracy loss (<6%)         |
+| **Latency**     | ~1.9 s  | ~5.9 s  | ⚠️ INT4 slower (small model overhead) |
+| **Peak Memory** | ~9.2 GB | ~9.2 GB | ⚠️ KV-cache dominates memory          |
+
+> **Key takeaway:**
+> Quantization preserves accuracy and reduces weight size but may not improve latency for smaller models.
+> The benefits become significant with **larger architectures** (≥350 M parameters) and **longer sequences**.
+
+---
+
+### Why INT4 Appears Slower on Small Models
+
+1. **Kernel Overhead** — bitsandbytes launches custom CUDA kernels, which dominate small compute graphs.
+2. **KV-Cache Unquantized** — most runtime memory is still FP16.
+3. **Short Sequences** — quantization overhead isn’t amortized over long runs.
+4. **Small Model Size** — compute load too small for parallelization benefits.
+
+---
+
+### Lessons Learned
+
+* Quantization can maintain model quality with negligible accuracy drop.
+* True efficiency gains emerge with **larger models** and **longer token generation**.
+* Always distinguish between **model-weight memory** and **runtime memory**.
+* Benchmarks must include both **accuracy (PPL)** and **latency** to assess real trade-offs.
+
+---
+
+### How to Run
+
+1. Clone this repository:
+   code
+   git clone [https://github.com/iamfaham/quantization-benchmark.git](https://github.com/iamfaham/quantization-benchmark.git)
+   cd quantization-benchmark
+   code
+
+2. Launch the notebook:
+   code
+   jupyter notebook Quantization_Benchmark.ipynb
+   code
+---
+
+### Dependencies
+
+```
+pip install torch transformers datasets bitsandbytes accelerate
+```
+
+> Tested with:
+>
+> * `transformers >= 4.44`
+> * `bitsandbytes >= 0.43`
+> * `torch >= 2.3`
+> * Python 3.10+
+
+---
+
+### Future Improvements
+
+* Add **GPTQ** and **AWQ** quantization backends.
+* Profile with **NVIDIA TensorRT-LLM** for low-level kernel comparison.
+* Test on larger models (OPT-350M, Mistral-7B, LLaMA-2-7B).
+* Include **weight-only memory profiling** and **KV-cache quantization**.
